@@ -38,7 +38,7 @@ var RobotConfig = {
   ---------------------------------------------------------- */
   topics: {
     /* Navigation & Localisation */
-    cmd_vel:          "/cmd_vel_safe",
+    cmd_vel:          "/cmd_vel",
     odom:             "/odom",
     map:              "/map",
     scan:             "/merged_laser",

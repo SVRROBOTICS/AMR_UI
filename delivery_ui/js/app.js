@@ -12,7 +12,7 @@ var SERVER_HOST = window.location.hostname || "localhost";
 var SERVER_URL  = "http://" + SERVER_HOST + ":5000";
 var ROS_WS_URL  = "ws://"  + SERVER_HOST + ":9090";
 
-/* Camera feeds set by login controller in index.html */
+/* Camera feeds applied directly on page load */
 
 
 /* ---------- ROS CONNECTION ---------- */
@@ -27,6 +27,9 @@ ros.on("connection", function () {
     ros: ros, name: RobotConfig.topics.cmd_vel,
     messageType: "geometry_msgs/Twist"
   });
+  if (typeof showHomeWarning === "function") {
+    showHomeWarning();
+  }
 });
 ros.on("error", function () {
   document.getElementById("ros-status").textContent = "● ERROR";
@@ -984,6 +987,10 @@ function unlockLocalization() { unlockSection(LOC_BTN_IDS); }
 var _docked = false;
 
 function toggleDock() {
+  if (typeof _missionActive !== 'undefined' && _missionActive) {
+    showToast('⚠ Cannot dock/undock while a mission is active', 'error');
+    return;
+  }
   var btn = document.getElementById('btn-dock');
   if (!_docked) {
     fetch(SERVER_URL + '/dock', { method: 'POST' })

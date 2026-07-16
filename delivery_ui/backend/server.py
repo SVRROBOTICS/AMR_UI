@@ -88,12 +88,10 @@ from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.action import ActionClient
 from nav_msgs.msg import OccupancyGrid
-from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
+from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav2_msgs.action import NavigateToPose
 from action_msgs.msg import GoalStatus
-from std_msgs.msg import String
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
-
 
 rclpy.init()
 
@@ -204,23 +202,6 @@ class _NavGoalNode(Node):
         self._last_goal = None
         self._last_error = ""
 
-        # cmd_vel publisher — used by _reverse_then_go_home() for the manual
-        # reverse leg on delivery/program stop. Kept here (rather than a raw
-        # `ros2 topic pub` subprocess) so the publish is a real rclpy call on
-        # the shared executor: no shell dependency, no string-interpolation
-        # injection surface, and it can be ticked/aborted from a Python loop.
-        cmd_vel_topic = _cfg.get("topics", {}).get("cmd_vel", "/cmd_vel")
-        self._cmd_vel_pub = self.create_publisher(Twist, cmd_vel_topic, 10)
-
-    def publish_cmd_vel(self, linear_x=0.0, angular_z=0.0):
-        msg = Twist()
-        msg.linear.x  = float(linear_x)
-        msg.angular.z = float(angular_z)
-        self._cmd_vel_pub.publish(msg)
-
-    def stop_cmd_vel(self):
-        self.publish_cmd_vel(0.0, 0.0)
-
     def send_goal(self, x, y, yaw):
         qz = math.sin(yaw / 2.0)
         qw = math.cos(yaw / 2.0)
@@ -306,72 +287,6 @@ class _NavGoalNode(Node):
 _nav_goal_node = _NavGoalNode()
 _ros_executor.add_node(_nav_goal_node)
 
-
-# ── Localization health gate ─────────────────────────────────────────────────
-# /localization_status (std_msgs/String, values "good" | "fair" | "bad") is
-# published by the AMCL health monitor and already drives UI state in
-# localization.js. Anything that fires an *autonomous* motion off the back of
-# a stop request (reverse leg + go-home Nav2 goal) must gate on the same
-# signal server-side — disabling buttons in the browser doesn't stop a
-# request that's already in flight, and this must hold even if the frontend
-# gate is ever bypassed (stale tab, direct API call, etc).
-
-_loc_status_lock    = threading.Lock()
-_latest_loc_status  = {"value": None, "received_at": 0.0}
-_LOC_STATUS_STALE_SEC = 5.0   # a status older than this is treated as unknown
-
-
-class _LocalizationStatusNode(Node):
-    def __init__(self):
-        super().__init__("flask_localization_status_listener")
-        topic = _cfg.get("topics", {}).get("localization_status", "/localization_status")
-        qos = QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.VOLATILE,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=10
-        )
-        self.create_subscription(String, topic, self._cb, qos)
-        self.get_logger().info(f"Subscribed to {topic}")
-
-    def _cb(self, msg):
-        global _latest_loc_status
-        with _loc_status_lock:
-            _latest_loc_status = {
-                "value":       msg.data.strip().lower(),
-                "received_at": time.time(),
-            }
-
-
-def get_localization_status():
-    """Returns (status: 'good'|'fair'|'bad'|None, is_stale: bool)."""
-    with _loc_status_lock:
-        value       = _latest_loc_status["value"]
-        received_at = _latest_loc_status["received_at"]
-    if value is None:
-        return None, True
-    stale = (time.time() - received_at) > _LOC_STATUS_STALE_SEC
-    return value, stale
-
-
-def localization_ok_for_autonomous_motion():
-    """Gate for the reverse-then-home maneuver (and any future auto-nav on
-    stop). Set _FAIL_OPEN = False if your deployment requires the health
-    monitor to be running before any stop-triggered navigation is permitted
-    — as shipped this fails OPEN (allows motion) when the topic has never
-    published or has gone stale, so sites without the monitor node aren't
-    silently blocked forever."""
-    _FAIL_OPEN = True
-    status, stale = get_localization_status()
-    if status is None or stale:
-        return _FAIL_OPEN
-    return status not in ("bad", "fair")
-
-
-_loc_status_node = _LocalizationStatusNode()
-_ros_executor.add_node(_loc_status_node)
-
-
 def _ros_spin_thread():
     try:
         _ros_executor.spin()
@@ -398,43 +313,15 @@ mission_process      = None   # mission_runner.py subprocess
 active_map_yaml      = None
 
 
-# def kill_process(proc):
-#     if proc and proc.poll() is None:
-#         try:
-#             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-#         except:
-#             pass
-
-def kill_process(proc, name="", term_wait=1.5):
-    """SIGTERM the process group, wait up to term_wait s for a clean exit,
-    THEN escalate to SIGKILL only if still alive. Never SIGKILL first —
-    driver shutdown hooks (e.g. lidar stop-motor over serial) run on
-    SIGTERM's signal handler path; SIGKILL bypasses that at the kernel
-    level and leaves the physical motor spinning."""
-    if not proc or proc.poll() is not None:
-        return
-    try:
-        pgid = os.getpgid(proc.pid)
-    except ProcessLookupError:
-        return
-    try:
-        os.killpg(pgid, signal.SIGTERM)
-    except Exception as e:
-        print(f"[kill_process] SIGTERM failed for {name or proc.pid}: {e}")
-        return
-
-    deadline = time.time() + term_wait
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            return
-        time.sleep(0.1)
-
-    print(f"[kill_process] {name or proc.pid} still alive {term_wait}s after "
-          f"SIGTERM — escalating to SIGKILL.")
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except Exception:
-        pass
+def kill_process(proc, name=None):
+    if proc and proc.poll() is None:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGINT)
+        except:
+            try:
+                proc.terminate()
+            except:
+                pass
 
 
 def kill_nav_nodes():
@@ -549,6 +436,23 @@ def get_maps():
     return jsonify(maps)
 
 
+@app.route("/maps/latest")
+def get_latest_map():
+    """Return the YAML filename of the most recently modified map."""
+    latest = None
+    latest_time = 0
+    for file in os.listdir(MAP_FOLDER):
+        if file.endswith((".yaml", ".yml")):
+            path = os.path.join(MAP_FOLDER, file)
+            mtime = os.path.getmtime(path)
+            if mtime > latest_time:
+                latest_time = mtime
+                latest = file
+    if latest:
+        return jsonify({"map": latest, "mtime": latest_time})
+    return jsonify({"map": None}), 404
+
+
 @app.route("/map_image/<path:name>")
 def get_map_image(name):
     from flask import Response
@@ -629,38 +533,6 @@ def startRobot():
     )
     return jsonify({"status": "robot_started"})
 
-# @app.route("/stop_robot", methods=["POST"])
-# def stopRobot():
-#     global robot_process, slam_process, localization_process, navigation_process
-#     # 1. Kill the bringup launch process group (kills all children including lidar drivers)
-#     kill_process(robot_process)
-#     robot_process = None
-#     # 2. Kill by process name to catch any orphaned nodes from the bringup
-#     for pattern in [
-#         "robomuse_launch", "robot_bringup",
-#         "ira_laser_tools", "laser_merger", "merged_laser",   # lidar merger
-#         "ldlidar", "rplidar", "urg_node", "laser_scan",       # common lidar drivers
-#         "robot_state_publisher", "joint_state_publisher",     # robot description
-#     ]:
-#         try:
-#             subprocess.Popen(["pkill", "-9", "-f", pattern], preexec_fn=os.setsid)
-#         except Exception:
-#             pass
-#     # 3. Also kill nav/slam if running
-#     try:
-#         kill_nav_nodes()
-#         kill_process(slam_process);         slam_process         = None
-#         kill_process(localization_process); localization_process = None
-#         kill_process(navigation_process);   navigation_process   = None
-#     except Exception:
-#         pass
-#     # 4. Short delay for nodes to die, then cancel any pending /cmd_vel
-#     time.sleep(0.3)
-#     return jsonify({"status": "robot_stopped"})
-
-# @app.route("/stop_robot", methods=["POST"])
-# def stopRobot():
-#     global robot_process, slam_process, localization_process, navigation_process
 @app.route("/stop_robot", methods=["POST"])
 def stopRobot():
     global robot_process
@@ -694,7 +566,7 @@ def stopRobot():
     # Stop localization exactly like Stop Localization button
     cleanup_loc_only()
 
-    # Stop robot bringup
+    # Stop robot bringup cleanly
     kill_process(robot_process, "robot")
     robot_process = None
 
@@ -710,8 +582,9 @@ def stopRobot():
         "laser_merger",
         "ira_laser_tools",
         "point_cloud_processing_node",
-        "custom_filter.py",
-        "motor_node.py",
+        "point_cloud",
+        "custom_filter",
+        "motor_node",
         "map_server",
         "amcl",
         "planner_server",
@@ -720,8 +593,29 @@ def stopRobot():
         "behavior_server",
         "waypoint_follower",
         "lifecycle_manager",
+        "realsense2_camera",
+        "jkbms",
+        "auto_charging",
+        "serial_publisher",
+        "esp32_serial",
+        "apriltag",
+        "voice",
+        "led_node",
+        "rviz2",
     ]
 
+    # Step 1: Send SIGINT (2) for clean ROS2 node shutdown
+    for p in patterns:
+        subprocess.run(
+            ["pkill", "-2", "-f", p],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+
+    # Allow 8 seconds for the nodes (like motor_node and rplidar) to finish cleanups
+    time.sleep(8)
+
+    # Step 2: Send SIGTERM (15) for standard termination on leftover processes
     for p in patterns:
         subprocess.run(
             ["pkill", "-15", "-f", p],
@@ -731,6 +625,7 @@ def stopRobot():
 
     time.sleep(2)
 
+    # Step 3: Send SIGKILL (9) as a last resort
     for p in patterns:
         subprocess.run(
             ["pkill", "-9", "-f", p],
@@ -749,7 +644,10 @@ def stopRobot():
 def robotStatus():
     global robot_process
     running = robot_process is not None and robot_process.poll() is None
-    return jsonify({"running": running})
+    odom_topic = _cfg.get("topics", {}).get("odom", "/odom")
+    active_topics = [t[0] for t in _pose_node.get_topic_names_and_types()]
+    active = running and (odom_topic in active_topics)
+    return jsonify({"running": running, "active": active})
 
 
 @app.route("/save_map", methods=["POST"])
@@ -978,6 +876,9 @@ def startLocalization():
     # Use cleanup_loc_only — never kill mission_process.
     # If a mission is running and the user refreshes, the page calls
     # startLocalization again but the mission_runner must keep running.
+    global _latest_pose
+    with _pose_lock:
+        _latest_pose = None
     cleanup_loc_only()
     active_map_yaml = map_yaml
 
@@ -1039,17 +940,12 @@ def robotPose():
 def amclReady():
     """Returns {ready: true} once AMCL has published at least one /amcl_pose.
     The frontend polls this after startLocalization to know when it is safe
-    to republish the saved initialpose (publishing too early is ignored by AMCL
-    because the lifecycle nodes are not yet active)."""
-    try:
-        result = subprocess.run(
-            ["ros2", "topic", "echo", "--once",
-             "/amcl_pose", "geometry_msgs/msg/PoseWithCovarianceStamped"],
-            capture_output=True, text=True, timeout=3
-        )
-        ready = result.returncode == 0 and "position" in result.stdout
-    except Exception:
-        ready = False
+    to republish the saved initialpose."""
+    global _latest_pose
+    with _pose_lock:
+        pose = _latest_pose
+    # If a pose has been received within the last 5 seconds, AMCL is active and ready
+    ready = pose is not None and (time.time() - pose.get("received_at", 0) < 5.0)
     return jsonify({"ready": ready})
 
 
@@ -1333,51 +1229,51 @@ def _delivery_weight_listener():
 
 
 def _reverse_then_go_home(speed=0.09, duration=8.0):
-    """Reverse off the delivery point, then navigate home — gated on
-    /localization_status. Runs on a daemon thread from deliveryStop()."""
-
-    # Hard stop is unconditional — independent of localization quality.
-    # Only the *reverse leg* and the *go-home goal* rely on a trustworthy
-    # pose estimate, so only those two are gated below.
-    _nav_goal_node.stop_cmd_vel()
-
-    if not localization_ok_for_autonomous_motion():
-        status, stale = get_localization_status()
-        print(f"[delivery] localization_status={status!r} stale={stale} "
-              f"— skipping reverse+home, robot left stopped in place.")
-        return
-
-    rate_hz   = 10
-    step_time = 1.0 / rate_hz
-    steps     = int(duration * rate_hz)
-
-    for _ in range(steps):
-        # Re-check every tick (100 ms) rather than committing to the full
-        # open-loop duration up front — abort immediately if localization
-        # degrades mid-reverse.
-        if not localization_ok_for_autonomous_motion():
-            _nav_goal_node.stop_cmd_vel()
-            print("[delivery] localization degraded mid-reverse — aborting, robot stopped.")
-            return
-        _nav_goal_node.publish_cmd_vel(linear_x=-abs(speed))
-        time.sleep(step_time)
-
-    _nav_goal_node.stop_cmd_vel()
-
-    # Final gate before committing to the Nav2 goal — status may have
-    # flipped bad in the instant between the last reverse tick and here.
-    if not localization_ok_for_autonomous_motion():
-        print("[delivery] localization degraded after reverse — skipping go-home goal.")
-        return
-
     home = _cfg.get("home", {})
     hx   = float(home.get("x",   0.0))
     hy   = float(home.get("y",   0.0))
     hyaw = float(home.get("yaw", 0.0))
+    import math as _math
+    hz = _math.sin(hyaw / 2.0)
+    hw = _math.cos(hyaw / 2.0)
+    goal = (
+        '{"pose": {"header": {"frame_id": "map"}, "pose": {"position": '
+        '{"x": %f, "y": %f, "z": 0.0}, "orientation": '
+        '{"x": 0.0, "y": 0.0, "z": %f, "w": %f}}}}' % (hx, hy, hz, hw)
+    )
+    ros_env = os.environ.copy()
+    ros_env["ROS_DOMAIN_ID"] = ros_env.get("ROS_DOMAIN_ID", "0")
+
+    # Publish backward velocity for the requested duration, then stop.
+    reverse_cmd = (
+        "timeout %f ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist "
+        "'{linear: {x: %f, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}'" %
+        (duration, -abs(speed))
+    )
     try:
-        _nav_goal_node.send_goal(hx, hy, hyaw)
-    except Exception as e:
-        print(f"[delivery] failed to send go-home goal: {e}")
+        subprocess.run(reverse_cmd, shell=True, env=ros_env,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       check=False)
+    except Exception:
+        pass
+
+    # Send a zero twist to ensure stop, then go home.
+    stop_cmd = (
+        "ros2 topic pub -1 /cmd_vel geometry_msgs/msg/Twist '{}'"
+    )
+    try:
+        subprocess.run(stop_cmd, shell=True, env=ros_env,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       check=False)
+    except Exception:
+        pass
+
+    subprocess.Popen(
+        ["ros2", "action", "send_goal", "/navigate_to_pose",
+         "nav2_msgs/action/NavigateToPose", goal],
+        preexec_fn=os.setsid, env=ros_env,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
 
 @app.route("/delivery/start", methods=["POST"])

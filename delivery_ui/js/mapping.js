@@ -60,10 +60,10 @@ function selectMap() {
 /* ---------- RESET POSE STATE ---------- */
 
 function resetPoseState() {
-  poseHasBeenSet     = false;
-  freezeOdom         = true;
+  poseHasBeenSet = false;
+  freezeOdom = true;
   robotLayer.visible = false;
-  laserLayer.visible = false; if(typeof clearScan==="function") clearScan();
+  laserLayer.visible = false; if (typeof clearScan === "function") clearScan();
   laserLayer.removeAllChildren();
   var btnHome = document.getElementById("btn-home");
   if (btnHome) btnHome.disabled = true;
@@ -83,30 +83,36 @@ function startMapping() {
   var costToggle = document.getElementById("toggle-costmap");
   if (costToggle) costToggle.checked = false;
   document.getElementById("mapImage").style.display = "none";
-  document.getElementById("map").style.display      = "block";
+  document.getElementById("map").style.display = "block";
   showToast("⏳ Starting mapping...", "info");
+  if (typeof showLoadingOverlay === "function") showLoadingOverlay('Starting Mapping...', 'Initializing SLAM toolbox...');
   fetch(SERVER_URL + "/start_mapping", { method: "POST" })
     .then(r => r.json())
-    .then(function() {
+    .then(function () {
       /* Show robot at origin immediately — odom will update it */
-      robotLayer.x        = 0;
-      robotLayer.y        = 0;
+      robotLayer.x = 0;
+      robotLayer.y = 0;
       robotLayer.rotation = 0;
-      robotLayer.visible  = true;
-      laserLayer.visible  = true;
-      poseHasBeenSet      = true;
+      robotLayer.visible = true;
+      laserLayer.visible = true;
+      poseHasBeenSet = true;
       stage.update();
       /* Draw robot on overlay immediately (before first scan arrives) */
       if (typeof redrawOverlay === "function") redrawOverlay();
+      if (typeof hideLoadingOverlay === "function") hideLoadingOverlay();
       showToast("✅ Mapping started — drive the robot", "success");
     })
-    .catch(() => showToast("⚠ Failed to start mapping", "error"));
+    .catch(function () {
+      if (typeof hideLoadingOverlay === "function") hideLoadingOverlay();
+      showToast("⚠ Failed to start mapping", "error");
+    });
 }
 
 
 /* ---------- STOP MAPPING ---------- */
 
 function stopMapping() {
+  if (typeof showLoadingOverlay === "function") showLoadingOverlay('Stopping Mapping...', 'Stopping SLAM mapping session...');
   fetch(SERVER_URL + "/stop_mapping", { method: "POST" })
     .then(r => r.json())
     .then(function () {
@@ -116,9 +122,13 @@ function stopMapping() {
       robotLayer.visible = false;
       if (typeof clearScan === "function") clearScan();
       mapMode = "idle";
+      if (typeof hideLoadingOverlay === "function") hideLoadingOverlay();
       showToast("⏹ Mapping stopped — save or discard the map", "info");
     })
-    .catch(() => showToast("⚠ Failed to stop mapping", "error"));
+    .catch(function () {
+      if (typeof hideLoadingOverlay === "function") hideLoadingOverlay();
+      showToast("⚠ Failed to stop mapping", "error");
+    });
 }
 
 
@@ -132,27 +142,33 @@ function _resetToIdle() {
     rootObject.removeChild(mapBitmap); mapBitmap = null;
   }
   if (typeof stopMapPolling === "function") stopMapPolling();
-  if (typeof resetMapFit    === "function") resetMapFit();
+  if (typeof resetMapFit === "function") resetMapFit();
   /* Unlock localization so user can immediately switch to localization */
   if (typeof unlockLocalization === "function") unlockLocalization();
   /* Reset UI buttons — restore to "ready to start new mapping" state */
-  var saveBlock  = document.getElementById("save-map-block");
+  var saveBlock = document.getElementById("save-map-block");
   var startBlock = document.getElementById("btn-start-mapping");
-  var stopBlock  = document.getElementById("btn-stop-mapping");
-  var ph         = document.getElementById("map-placeholder");
-  var mc         = document.getElementById("mapContainer");
-  if (saveBlock)  saveBlock.style.display  = "none";
+  var stopBlock = document.getElementById("btn-stop-mapping");
+  var ph = document.getElementById("map-placeholder");
+  var mc = document.getElementById("mapContainer");
+  if (saveBlock) saveBlock.style.display = "none";
   if (startBlock) startBlock.style.display = "block";
-  if (stopBlock)  stopBlock.style.display  = "none";
-  if (mc)         mc.style.display         = "none";
-  if (ph)         ph.style.display         = "flex";
+  if (stopBlock) stopBlock.style.display = "none";
+  if (mc) mc.style.display = "none";
+  if (ph) ph.style.display = "flex";
+
+  var editBtn = document.getElementById("btn-edit-map");
+  if (editBtn) editBtn.style.display = "block";
+  var backBtn = document.getElementById("btn-back-mapping");
+  if (backBtn) backBtn.style.display = "block";
+
   loadMapList();
+  if (typeof _updateHeaderStatusLabels === "function") _updateHeaderStatusLabels();
 }
 
 function discardMapAndReturn() {
   _resetToIdle();
   showToast("🗑 Map discarded", "info");
-  setTimeout(function() { switchView("home"); }, 400);
 }
 
 var _savingMap = false;
@@ -165,6 +181,7 @@ function saveMapAndReturn() {
   /* Show saving indicator */
   var saveBtn = document.querySelector("#save-map-block .btn-success");
   if (saveBtn) { saveBtn.textContent = "⏳ Saving…"; saveBtn.disabled = true; }
+  if (typeof showLoadingOverlay === "function") showLoadingOverlay('Saving Map...', 'Saving environment map: ' + name);
 
   fetch(SERVER_URL + "/save_map", {
     method: "POST",
@@ -172,9 +189,10 @@ function saveMapAndReturn() {
     body: JSON.stringify({ name: name })
   })
     .then(r => r.json())
-    .then(function(data) {
+    .then(function (data) {
       _savingMap = false;
       if (saveBtn) { saveBtn.textContent = "💾 Save Map"; saveBtn.disabled = false; }
+      if (typeof hideLoadingOverlay === "function") hideLoadingOverlay();
 
       if (data.status === "error") {
         showToast("⚠ Save failed: " + (data.message || "unknown"), "error");
@@ -183,11 +201,11 @@ function saveMapAndReturn() {
 
       showToast("✅ Map saved: " + name, "success");
       _resetToIdle();
-      setTimeout(function() { switchView("home"); }, 400);
     })
-    .catch(function(err) {
+    .catch(function (err) {
       _savingMap = false;
       if (saveBtn) { saveBtn.textContent = "💾 Save Map"; saveBtn.disabled = false; }
+      if (typeof hideLoadingOverlay === "function") hideLoadingOverlay();
       showToast("⚠ Network error saving map", "error");
     });
 }
@@ -195,6 +213,7 @@ function saveMapAndReturn() {
 function saveMap() {
   var name = document.getElementById("mapname").value.trim();
   if (!name) { showToast("⚠ Enter a map name first", "error"); return; }
+  if (typeof showLoadingOverlay === "function") showLoadingOverlay('Saving Map...', 'Saving environment map: ' + name);
   fetch(SERVER_URL + "/save_map", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -202,30 +221,35 @@ function saveMap() {
   })
     .then(r => r.json())
     .then(() => {
+      if (typeof hideLoadingOverlay === "function") hideLoadingOverlay();
       showToast("✅ Map saved: " + name, "success");
       setTimeout(loadMapList, 2000);
     })
-    .catch(() => { _savingMap = false; showToast("⚠ Failed to save map", "error"); });
+    .catch(() => {
+      _savingMap = false;
+      if (typeof hideLoadingOverlay === "function") hideLoadingOverlay();
+      showToast("⚠ Failed to save map", "error");
+    });
 }
 
 
 /* ---------- ODOM SUBSCRIBER (mapping mode only) ---------- */
 
 var odomTopic = new ROSLIB.Topic({
-  ros          : ros,
-  name         : RobotConfig.topics.odom,
-  messageType  : "nav_msgs/Odometry",
-  compression  : "none",
+  ros: ros,
+  name: RobotConfig.topics.odom,
+  messageType: "nav_msgs/Odometry",
+  compression: "none",
   throttle_rate: RobotConfig.throttle.odom
 });
 odomTopic.subscribe(function (msg) {
   if (mapMode !== "mapping") return;
-  var p   = msg.pose.pose.position;
-  var q   = msg.pose.pose.orientation;
-  var yaw = Math.atan2(2*(q.w*q.z + q.x*q.y), 1 - 2*(q.y*q.y + q.z*q.z));
-  _robotYawRad        = yaw;           /* store for laser scan alignment */
-  robotLayer.x        =  p.x;
-  robotLayer.y        = -p.y;
+  var p = msg.pose.pose.position;
+  var q = msg.pose.pose.orientation;
+  var yaw = Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
+  _robotYawRad = yaw;           /* store for laser scan alignment */
+  robotLayer.x = p.x;
+  robotLayer.y = -p.y;
   robotLayer.rotation = -yaw * (180 / Math.PI);
 
   /* Ensure robot is visible — odom arriving means SLAM is running */

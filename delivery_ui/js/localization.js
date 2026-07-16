@@ -11,28 +11,178 @@
 /* ---------- AMCL POSE SUBSCRIBER ---------- */
 
 var amclPoseTopic = new ROSLIB.Topic({
-  ros          : ros,
-  name         : RobotConfig.topics.amcl_pose,
-  messageType  : "geometry_msgs/PoseWithCovarianceStamped",
-  compression  : "none",
+  ros: ros,
+  name: RobotConfig.topics.amcl_pose,
+  messageType: "geometry_msgs/PoseWithCovarianceStamped",
+  compression: "none",
   throttle_rate: RobotConfig.throttle.amcl
 });
 amclPoseTopic.subscribe(function (msg) {
   if (mapMode !== "localization") return;
-  var p   = msg.pose.pose.position;
-  var q   = msg.pose.pose.orientation;
-  var yaw = Math.atan2(2*(q.w*q.z + q.x*q.y), 1 - 2*(q.y*q.y + q.z*q.z));
+  var p = msg.pose.pose.position;
+  var q = msg.pose.pose.orientation;
+  var yaw = Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
   _applyRobotPose(p.x, p.y, yaw, false);
+});
+
+
+/* ---------- LOCALIZATION STATUS MODAL ---------- */
+
+function showLocalizationStatusModal(text, statusType) {
+  var modal = document.getElementById("localization-status-modal");
+  var content = document.getElementById("loc-modal-content");
+  var glow = document.getElementById("loc-modal-glow");
+  var icon = document.getElementById("loc-modal-icon");
+  var title = document.getElementById("loc-modal-title");
+  var textEl = document.getElementById("loc-modal-text");
+  var okBtn = document.getElementById("loc-modal-ok-btn");
+
+  if (!modal || !textEl) return;
+
+  textEl.textContent = text;
+
+  if (statusType === "success") {
+    if (content) content.style.borderColor = "#22c55e";
+    if (glow) glow.style.background = "rgba(34, 197, 94, 0.2)";
+    if (icon) {
+      icon.textContent = "✅";
+      icon.style.filter = "drop-shadow(0 0 10px rgba(34, 197, 94, 0.3))";
+    }
+    if (title) {
+      title.textContent = "LOCALIZATION OK";
+      title.style.color = "#22c55e";
+    }
+    if (okBtn) {
+      okBtn.style.borderColor = "#22c55e";
+      okBtn.style.background = "rgba(34, 197, 94, 0.1)";
+      okBtn.style.color = "#22c55e";
+    }
+  } else if (statusType === "error") {
+    if (content) content.style.borderColor = "#ef4444";
+    if (glow) glow.style.background = "rgba(239, 68, 68, 0.2)";
+    if (icon) {
+      icon.textContent = "⚠️";
+      icon.style.filter = "drop-shadow(0 0 10px rgba(239, 68, 68, 0.3))";
+    }
+    if (title) {
+      title.textContent = "LOCALIZATION BAD";
+      title.style.color = "#ef4444";
+    }
+    if (okBtn) {
+      okBtn.style.borderColor = "#ef4444";
+      okBtn.style.background = "rgba(239, 68, 68, 0.1)";
+      okBtn.style.color = "#ef4444";
+    }
+  } else { // warning or info
+    if (content) content.style.borderColor = "#f59e0b";
+    if (glow) glow.style.background = "rgba(245, 158, 11, 0.2)";
+    if (icon) {
+      icon.textContent = "⚠️";
+      icon.style.filter = "drop-shadow(0 0 10px rgba(245, 158, 11, 0.3))";
+    }
+    if (title) {
+      title.textContent = "LOCALIZATION WARNING";
+      title.style.color = "#f59e0b";
+    }
+    if (okBtn) {
+      okBtn.style.borderColor = "#f59e0b";
+      okBtn.style.background = "rgba(245, 158, 11, 0.1)";
+      okBtn.style.color = "#f59e0b";
+    }
+  }
+
+  modal.style.display = "flex";
+}
+
+function closeLocStatusModal() {
+  var modal = document.getElementById("localization-status-modal");
+  if (modal) modal.style.display = "none";
+}
+
+
+/* ---------- /localization_status TOPIC ---------- */
+
+var localizationStatusTopic = new ROSLIB.Topic({
+  ros: ros,
+  name: "/localization_status",
+  messageType: "std_msgs/String"
+});
+
+var lastLocStatus = null;
+localizationStatusTopic.subscribe(function (msg) {
+  var status = msg.data.toUpperCase();
+  var el = document.getElementById("topbar-loc-status");
+  if (el) {
+    el.textContent = status;
+    if (status === "GOOD") {
+      el.style.color = "#22c55e"; // green
+    } else if (status === "FAIR") {
+      el.style.color = "#f59e0b"; // orange/yellow
+    } else if (status === "BAD") {
+      el.style.color = "#ef4444"; // red
+    } else {
+      el.style.color = "var(--muted)"; // gray
+    }
+  }
+
+  // Show a popup modal when localization status changes
+  if (status !== lastLocStatus) {
+    lastLocStatus = status;
+    var type = "info";
+    if (status === "GOOD") {
+      type = "success";
+    } else if (status === "BAD") {
+      type = "error";
+    } else if (status === "FAIR") {
+      type = "warning";
+    }
+    showLocalizationStatusModal("Localization Status is " + status, type);
+  }
+});
+
+
+/* ---------- /navigation_feedback TOPIC ---------- */
+
+var navigationFeedbackTopic = new ROSLIB.Topic({
+  ros: ros,
+  name: "/navigation_feedback",
+  messageType: "std_msgs/String"
+});
+
+navigationFeedbackTopic.subscribe(function (msg) {
+  var text = msg.data;
+  var type = "info";
+  var lower = text.toLowerCase();
+  if (lower.includes("good") || lower.includes("successful") || lower.includes("started") || lower.includes("recovered") || lower.includes("enabled") || lower.includes("success")) {
+    type = "success";
+  } else if (lower.includes("bad") || lower.includes("fair") || lower.includes("failed") || lower.includes("stopped") || lower.includes("deactivated") || lower.includes("error") || lower.includes("cancel") || lower.includes("already in progress")) {
+    type = "error";
+  }
+
+  var isLocFeedback = lower.includes("localization") || lower.includes("pose") || lower.includes("attempts") || lower.includes("initialpose");
+  if (isLocFeedback) {
+    var modalType = "warning";
+    if (lower.includes("good") || lower.includes("success") || lower.includes("successful")) {
+      modalType = "success";
+    } else if (lower.includes("bad") || lower.includes("failed") || lower.includes("error")) {
+      modalType = "error";
+    } else if (lower.includes("fair")) {
+      modalType = "warning";
+    }
+    showLocalizationStatusModal(text, modalType);
+  } else {
+    showToast(text, type);
+  }
 });
 
 
 /* ---------- /initialpose TOPIC ---------- */
 
 var initialPoseTopic = new ROSLIB.Topic({
-  ros         : ros,
-  name        : RobotConfig.topics.initial_pose,
-  messageType : "geometry_msgs/PoseWithCovarianceStamped",
-  compression : "none"
+  ros: ros,
+  name: RobotConfig.topics.initial_pose,
+  messageType: "geometry_msgs/PoseWithCovarianceStamped",
+  compression: "none"
 });
 
 function publishInitialPose(x, y, yaw) {
@@ -42,17 +192,18 @@ function publishInitialPose(x, y, yaw) {
     header: { frame_id: RobotConfig.frames.map },
     pose: {
       pose: {
-        position:    { x: x, y: y, z: 0 },
+        position: { x: x, y: y, z: 0 },
         orientation: { x: 0, y: 0, z: qz, w: qw }
       },
       covariance: [
-        0.25,0,0,0,0,0,  0,0.25,0,0,0,0,
-        0,0,0,0,0,0,     0,0,0,0,0,0,
-        0,0,0,0,0,0,     0,0,0,0,0,0.068
+        0.25, 0, 0, 0, 0, 0, 0, 0.25, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.068
       ]
     }
   }));
 }
+
 
 /* ---------- START LOCALIZATION ---------- */
 
@@ -61,27 +212,28 @@ var _POSE_KEY = "rbm_pose";   /* {x, y, yaw} — updated by every AMCL message *
 var _livePosePollTimer = null;
 
 function _saveLastPose(x, y, yaw) {
-  try { sessionStorage.setItem(_POSE_KEY, JSON.stringify({x:x,y:y,yaw:yaw})); } catch(e) {}
+  // disabled — don't depend on UI storage
 }
 function _loadLastPose() {
-  try { var r = sessionStorage.getItem(_POSE_KEY); return r ? JSON.parse(r) : null; } catch(e) { return null; }
+  // disabled — don't depend on UI storage
+  return null;
 }
 
 function _applyRobotPose(x, y, yaw, centerIfFirst) {
   var wasUnset = !poseHasBeenSet;
-  _robotYawRad        = yaw;
-  robotLayer.x        =  x;
-  robotLayer.y        = -y;
+  _robotYawRad = yaw;
+  robotLayer.x = x;
+  robotLayer.y = -y;
   robotLayer.rotation = -yaw * (180 / Math.PI);
-  robotLayer.visible  = true;
-  laserLayer.visible  = true;
-  poseHasBeenSet      = true;
+  robotLayer.visible = true;
+  laserLayer.visible = true;
+  poseHasBeenSet = true;
 
   var g = document.getElementById("btn-goal");
   var h = document.getElementById("btn-home");
-  var gl= document.getElementById("btn-get-location");
-  if (g)  { g.disabled = false; g.classList.add("btn-goal-ready"); }
-  if (h)  h.disabled = false;
+  var gl = document.getElementById("btn-get-location");
+  if (g) { g.disabled = false; g.classList.add("btn-goal-ready"); }
+  if (h) h.disabled = false;
   if (gl) gl.disabled = false;
   if (typeof enableMissionButtons === "function") enableMissionButtons();
 
@@ -97,36 +249,25 @@ function _applyRobotPose(x, y, yaw, centerIfFirst) {
 
 function _fetchLatestRobotPose(centerIfFirst) {
   return fetch(SERVER_URL + "/robot_pose")
-    .then(function(r) {
+    .then(function (r) {
       if (r.status === 204) return null;
       return r.json();
     })
-    .then(function(p) {
+    .then(function (p) {
       if (!p || p.status !== "ok") return null;
       _applyRobotPose(Number(p.x), Number(p.y), Number(p.yaw), !!centerIfFirst);
       return p;
     })
-    .catch(function() { return null; });
+    .catch(function () { return null; });
 }
 
 function _restorePoseFromBackend() {
   if (poseHasBeenSet) return Promise.resolve(true);
   return _fetchLatestRobotPose(true)
-    .then(function(p) {
-      if (p) return true;
-      var saved = _loadLastPose();
-      if (saved) {
-        _applyRobotPose(saved.x, saved.y, saved.yaw, true);
-        return true;
-      }
-      return false;
+    .then(function (p) {
+      return !!p;
     })
-    .catch(function() {
-      var saved = _loadLastPose();
-      if (saved) {
-        _applyRobotPose(saved.x, saved.y, saved.yaw, true);
-        return true;
-      }
+    .catch(function () {
       return false;
     });
 }
@@ -138,7 +279,7 @@ function initLocalizationView() {
 function startLivePosePolling() {
   if (_livePosePollTimer) return;
   _fetchLatestRobotPose(true);
-  _livePosePollTimer = setInterval(function() {
+  _livePosePollTimer = setInterval(function () {
     if (mapMode === "localization") _fetchLatestRobotPose(false);
   }, 500);
 }
@@ -150,33 +291,6 @@ function stopLivePosePolling() {
   }
 }
 
-/* Token that lets a manual pose-set cancel the startup auto-publish loop */
-var _posePublishToken = 0;
-
-/* Poll /amcl/ready then publish pose. Each call gets a token;
-   if the token changes (user set pose manually) the loop aborts. */
-function _publishPoseWhenReady(pose, tries, token) {
-  tries = tries || 0;
-  token = token || _posePublishToken;
-  if (tries > 20) return;
-  if (token !== _posePublishToken) return;  /* cancelled by manual pose set */
-  fetch(SERVER_URL + "/amcl/ready")
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      if (token !== _posePublishToken) return;  /* cancelled */
-      if (d.ready) {
-        publishInitialPose(pose.x, pose.y, pose.yaw);
-        setTimeout(function() {
-          if (token === _posePublishToken) publishInitialPose(pose.x, pose.y, pose.yaw);
-        }, 1500);
-      } else {
-        setTimeout(function() { _publishPoseWhenReady(pose, tries + 1, token); }, 2000);
-      }
-    })
-    .catch(function() {
-      setTimeout(function() { _publishPoseWhenReady(pose, tries + 1, token); }, 2000);
-    });
-}
 
 function startLocalization() {
   mapMode = "localization";
@@ -184,18 +298,19 @@ function startLocalization() {
   lockMapping();
   if (typeof resetMapFit === "function") resetMapFit();
 
-  var map  = document.getElementById("mapSelect").value;
+  var map = document.getElementById("mapSelect").value;
   var yaml = map.replace(".pgm", ".yaml");
   document.getElementById("mapImage").style.display = "none";
-  document.getElementById("map").style.display      = "block";
+  document.getElementById("map").style.display = "block";
   showToast("⏳ Starting localization...", "info");
+  if (typeof showLoadingOverlay === "function") showLoadingOverlay('Starting Navigation...', 'Warming up Nav2 stack and loading map...');
 
   fetch(SERVER_URL + "/start_localization", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ map: yaml })
   })
-    .then(function(r) { return r.json(); })
+    .then(function (r) { return r.json(); })
     .then(function (d) {
       showToast("⏳ Nav2 warming up (~15s)...", "info");
 
@@ -203,29 +318,9 @@ function startLocalization() {
       laserLayer.visible = true;
       startLivePosePolling();
 
-      if (d && (d.navigation_active || d.status === "localization_already_running")) {
-        _fetchLatestRobotPose(true);
-        return;
-      }
-
-      // var saved = _loadLastPose();
-      // if (saved) {
-      //   /* REFRESH — restore last known position on canvas immediately */
-      //   _applyRobotPose(saved.x, saved.y, saved.yaw, true);
-      //   _publishPoseWhenReady(saved);
-      // } else {
-      //   /* FRESH START — spawn robot at home position (0, 0, 0) automatically
-      //      and publish to AMCL once it is ready. User can refine later with
-      //      🎯 FIX ROBOT POSITION if the robot is not physically at home. */
-      //   var homePose = { x: 0, y: 0, yaw: 0 };
-      //   _applyRobotPose(0, 0, 0, true);
-      //   _publishPoseWhenReady(homePose);
-      //   showToast("🤖 Robot spawned at home — use 🎯 FIX ROBOT POSITION if needed", "info");
-      // }
-
-      // Let AMCL initialize itself from nav2_params.yaml.
-      // The UI will update automatically once /amcl_pose is received.
       _fetchLatestRobotPose(true);
+      if (typeof hideLoadingOverlay === "function") hideLoadingOverlay();
+
       if (typeof redrawOverlay === "function") redrawOverlay();
       if (typeof centerOnRobot === "function") setTimeout(centerOnRobot, 50);
 
@@ -239,7 +334,10 @@ function startLocalization() {
       if (btnGetLoc) btnGetLoc.disabled = false;
       if (typeof enableMissionButtons === "function") enableMissionButtons();
     })
-    .catch(function() { showToast("⚠ Failed to start localization", "error"); });
+    .catch(function () {
+      if (typeof hideLoadingOverlay === "function") hideLoadingOverlay();
+      showToast("⚠ Failed to start localization", "error");
+    });
 }
 
 
@@ -248,11 +346,11 @@ function startLocalization() {
 function enablePoseEstimate() {
   if (mapMode !== "localization") { showToast("⚠ Start localization first", "error"); return; }
   poseEstimateMode = true;
-  goalPoseMode     = false;
-  freezeOdom       = true;
-  document.getElementById("map").style.cursor          = "crosshair";
+  goalPoseMode = false;
+  freezeOdom = true;
+  document.getElementById("map").style.cursor = "crosshair";
   document.getElementById("pose-banner").style.display = "flex";
-  document.getElementById("pose-coords").textContent   = "Click on map to place robot…";
+  document.getElementById("pose-coords").textContent = "Click on map to place robot…";
   showToast("🎯 Click on map and drag to set heading", "info");
 }
 
@@ -276,47 +374,39 @@ function _updateGetLocHUD(x, y) {
 }
 
 function getLocationAsWaypoint() {
-  // if (!poseHasBeenSet) {
-  //   showToast("⚠ Set pose estimate first", "error");
-  //   return;
-  // }
-  if (mapMode !== "localization") {
-      showToast("⚠ Start localization first", "error");
-      return;
+  if (!poseHasBeenSet) {
+    showToast("⚠ Set pose estimate first", "error");
+    return;
   }
   /* Get current robot position from stored ROS coords */
-  var rx  = robotLayer.x;          /* already ros_x (no FLIP_X needed) */
-  var ry  = -robotLayer.y;         /* ros_y */
+  var rx = robotLayer.x;          /* already ros_x (no FLIP_X needed) */
+  var ry = -robotLayer.y;         /* ros_y */
   var yaw = _robotYawRad || 0;
 
   /* Build waypoint name */
   var nameInput = document.getElementById("get-loc-name");
   var name = (nameInput && nameInput.value.trim()) ||
-             ("WP" + (waypoints.length + 1) + " (" + rx.toFixed(1) + "," + ry.toFixed(1) + ")");
+    ("WP" + (waypoints.length + 1) + " (" + rx.toFixed(1) + "," + ry.toFixed(1) + ")");
 
   /* Add to waypoints list */
   waypoints.push({ name: name, x: rx, y: ry, yaw: yaw });
   if (nameInput) nameInput.value = "";
 
   /* Refresh UI */
-  if (typeof renderWpList          === "function") renderWpList();
+  if (typeof renderWpList === "function") renderWpList();
   if (typeof redrawWaypointMarkers === "function") redrawWaypointMarkers();
-  if (typeof saveMissionFile       === "function") saveMissionFile();
+  if (typeof saveMissionFile === "function") saveMissionFile();
 
   showToast("📍 Added waypoint: " + name, "success");
 }
 
 function enableGoalPose() {
-  // if (!poseHasBeenSet) { showToast("⚠ Set pose estimate first", "error"); return; }
-  if (mapMode !== "localization") {
-      showToast("⚠ Start localization first", "error");
-      return;
-  }
-  goalPoseMode     = true;
+  if (!poseHasBeenSet) { showToast("⚠ Set pose estimate first", "error"); return; }
+  goalPoseMode = true;
   poseEstimateMode = false;
-  document.getElementById("map").style.cursor          = "crosshair";
+  document.getElementById("map").style.cursor = "crosshair";
   document.getElementById("pose-banner").style.display = "flex";
-  document.getElementById("pose-coords").textContent   = "Click on map to set navigation goal…";
+  document.getElementById("pose-coords").textContent = "Click on map to set navigation goal…";
   document.getElementById("btn-goal").classList.add("btn-goal-active");
   showToast("🟢 Click on map and drag to set goal heading", "info");
 }
@@ -342,11 +432,7 @@ function publishGoalPose(x, y, yaw) {
 /* ---------- GO HOME ---------- */
 
 function goHome() {
-  // if (!poseHasBeenSet) { showToast("⚠ Start localization first", "error"); return; }
-  if (mapMode !== "localization") {
-      showToast("⚠ Start localization first", "error");
-      return;
-  }
+  if (!poseHasBeenSet) { showToast("⚠ Start localization first", "error"); return; }
   var home = (typeof getHomePose === "function") ? getHomePose() : { x: 0, y: 0, yaw: 0 };
   fetch(SERVER_URL + "/navigate_to_pose", {
     method: "POST",
@@ -362,7 +448,7 @@ function goHome() {
 /* ---------- MOUSE / TOUCH DRAG — POSE / GOAL / WAYPOINT ---------- */
 
 var poseStart = null;
-var dragging  = false;
+var dragging = false;
 
 function _getPointerCoords(e) {
   if (e.touches && e.touches.length) {
@@ -381,26 +467,26 @@ mapCanvas.addEventListener("touchstart", _onMapPointerDown, { passive: false });
 function _onMapPointerDown(e) {
   if (!poseEstimateMode && !goalPoseMode && !waypointMode) return;
   e.preventDefault();
-  dragging  = true;
+  dragging = true;
   var pt = _getPointerCoords(e);
   poseStart = canvasToRos(pt.clientX, pt.clientY);
 
   if (waypointMode) {
-    wpArrowContainer.x        =  poseStart.x;
-    wpArrowContainer.y        =  poseStart.y;
+    wpArrowContainer.x = poseStart.x;
+    wpArrowContainer.y = poseStart.y;
     wpArrowContainer.rotation = 0;
-    wpArrowContainer.visible  = true;
+    wpArrowContainer.visible = true;
   } else if (poseEstimateMode) {
-    poseArrowContainer.x        =  poseStart.x;
-    poseArrowContainer.y        =  poseStart.y;
+    poseArrowContainer.x = poseStart.x;
+    poseArrowContainer.y = poseStart.y;
     poseArrowContainer.rotation = 0;
-    poseArrowContainer.visible  = true;
+    poseArrowContainer.visible = true;
     laserLayer.visible = true;
   } else {
-    goalArrowContainer.x        =  poseStart.x;
-    goalArrowContainer.y        =  poseStart.y;
+    goalArrowContainer.x = poseStart.x;
+    goalArrowContainer.y = poseStart.y;
     goalArrowContainer.rotation = 0;
-    goalArrowContainer.visible  = true;
+    goalArrowContainer.visible = true;
   }
 
   stage.update();
@@ -418,7 +504,7 @@ function _onMapPointerMove(e) {
   var pt = _getPointerCoords(e);
   var rosPos = canvasToRos(pt.clientX, pt.clientY);
   /* yaw from ROS-space delta — scaleX<0 in scene already handles flip */
-  var yaw    = Math.atan2(rosPos.y - poseStart.y, rosPos.x - poseStart.x);
+  var yaw = Math.atan2(rosPos.y - poseStart.y, rosPos.x - poseStart.x);
 
   /* EaselJS rotation formula (proven for scaleX>0 or scaleX<0, scaleY always <0):
      rotation = +yaw_deg  puts arrow tip in correct screen direction.
@@ -462,18 +548,18 @@ function _onMapPointerUp(e) {
   var pt = _getPointerCoords(e);
   var rosPos = canvasToRos(pt.clientX, pt.clientY);
   /* yaw from ROS-space delta — scaleX<0 naturally gives correct heading */
-  var yaw    = Math.atan2(rosPos.y - poseStart.y, rosPos.x - poseStart.x);
+  var yaw = Math.atan2(rosPos.y - poseStart.y, rosPos.x - poseStart.x);
 
   document.getElementById("pose-banner").style.display = "none";
-  document.getElementById("map").style.cursor          = "default";
+  document.getElementById("map").style.cursor = "default";
 
   /* --- WAYPOINT branch --- */
   if (waypointMode) {
-    waypointMode             = false;
+    waypointMode = false;
     wpArrowContainer.visible = false;
 
     var name = document.getElementById("wp-name").value.trim() ||
-               ("Waypoint " + (waypoints.length + 1));
+      ("Waypoint " + (waypoints.length + 1));
     waypoints.push({ name: name, x: poseStart.x, y: poseStart.y, yaw: yaw });
     document.getElementById("wp-name").value = "";
     document.getElementById("btn-add-wp").classList.remove("btn-wp-active");
@@ -482,28 +568,23 @@ function _onMapPointerUp(e) {
     saveMissionFile();
     showToast("📍 Added: " + name, "success");
 
-  /* --- POSE ESTIMATE branch --- */
+    /* --- POSE ESTIMATE branch --- */
   } else if (poseEstimateMode) {
-    poseEstimateMode           = false;
+    poseEstimateMode = false;
     poseArrowContainer.visible = false;
     document.getElementById("btn-pose").classList.remove("btn-pose-ready");
 
     publishInitialPose(poseStart.x, poseStart.y, yaw);
 
-    robotLayer.x        =  poseStart.x;
-    robotLayer.y        = -poseStart.y;
+    robotLayer.x = poseStart.x;
+    robotLayer.y = -poseStart.y;
     robotLayer.rotation = -yaw * (180 / Math.PI);
-    _robotYawRad        = yaw;
-    robotLayer.visible  = true;
-    laserLayer.visible  = true;
-    poseHasBeenSet      = true;
+    _robotYawRad = yaw;
+    robotLayer.visible = true;
+    laserLayer.visible = true;
+    poseHasBeenSet = true;
 
-    /* Cancel any pending startup auto-publish (prevents it from
-       overwriting this manual pose once AMCL becomes ready) */
-    _posePublishToken++;
 
-    /* Save this pose — used on refresh so we never auto-publish (0,0,0) */
-    _saveLastPose(poseStart.x, poseStart.y, yaw);
 
     if (typeof updateRobotPosHUD === "function") updateRobotPosHUD(poseStart.x, poseStart.y);
     if (typeof centerOnRobot === "function") centerOnRobot();
@@ -521,9 +602,9 @@ function _onMapPointerUp(e) {
       "  θ: " + (yaw * 180 / Math.PI).toFixed(1) + "°", "success"
     );
 
-  /* --- GOAL POSE branch --- */
+    /* --- GOAL POSE branch --- */
   } else if (goalPoseMode) {
-    goalPoseMode               = false;
+    goalPoseMode = false;
     goalArrowContainer.visible = false;
     document.getElementById("btn-goal").classList.remove("btn-goal-active");
     publishGoalPose(poseStart.x, poseStart.y, yaw);
@@ -538,13 +619,13 @@ function _onMapPointerUp(e) {
 /* ---------- NAV PATH VISUALIZATION ---------- */
 
 /* ── NAV PATH — drawn on a DOM overlay canvas for pixel-accurate line width ── */
-var pathVisible  = true;
-var _lastPath    = null;   /* cached for redraw on zoom/pan */
+var pathVisible = true;
+var _lastPath = null;   /* cached for redraw on zoom/pan */
 
-var _pathCanvas = (function() {
+var _pathCanvas = (function () {
   var c = document.createElement("canvas");
   c.style.cssText = "position:absolute;top:0;left:0;pointer-events:none;z-index:3;";
-  setTimeout(function() {
+  setTimeout(function () {
     var mc = document.getElementById("map");
     if (mc) mc.appendChild(c);
   }, 200);
@@ -555,7 +636,7 @@ var _pathCtx = _pathCanvas.getContext("2d");
 function _syncPathCanvas() {
   var sc = typeof stage !== "undefined" ? stage.canvas : null;
   if (!sc) return;
-  if (_pathCanvas.width  !== sc.width)  _pathCanvas.width  = sc.width;
+  if (_pathCanvas.width !== sc.width) _pathCanvas.width = sc.width;
   if (_pathCanvas.height !== sc.height) _pathCanvas.height = sc.height;
 }
 
@@ -566,15 +647,15 @@ function _drawPathOnCanvas(poses) {
   if (Math.abs(viewer.scene.scaleX) < 2) return;   /* map not loaded yet */
 
   _pathCtx.strokeStyle = "#22c55e";   /* green like RViz planned path */
-  _pathCtx.lineWidth   = 2;           /* thinner — cleaner look */
-  _pathCtx.lineJoin    = "round";
-  _pathCtx.lineCap     = "round";
+  _pathCtx.lineWidth = 2;           /* thinner — cleaner look */
+  _pathCtx.lineJoin = "round";
+  _pathCtx.lineCap = "round";
   _pathCtx.setLineDash([]);
 
   var s = viewer.scene;
   _pathCtx.beginPath();
   var first = poses[0].pose.position;
-  var fp    = { px: s.x + first.x * s.scaleX, py: s.y + first.y * s.scaleY };
+  var fp = { px: s.x + first.x * s.scaleX, py: s.y + first.y * s.scaleY };
   _pathCtx.moveTo(fp.px, fp.py);
   for (var i = 1; i < poses.length; i++) {
     var pt = poses[i].pose.position;
@@ -589,10 +670,10 @@ function redrawPath() {
 }
 
 var planTopic = new ROSLIB.Topic({
-  ros          : ros,
-  name         : RobotConfig.topics.nav_plan,
-  messageType  : "nav_msgs/Path",
-  compression  : "none",
+  ros: ros,
+  name: RobotConfig.topics.nav_plan,
+  messageType: "nav_msgs/Path",
+  compression: "none",
   throttle_rate: RobotConfig.throttle.plan
 });
 planTopic.subscribe(function (msg) {
@@ -622,12 +703,12 @@ function clearNavPath() {
 /* Uses a DOM canvas overlay (same approach as scan) — no EaselJS path bugs */
 
 var costmapVisible = false;
-var costmapClient  = null;
+var costmapClient = null;
 
-var _costmapCanvas = (function() {
+var _costmapCanvas = (function () {
   var c = document.createElement("canvas");
   c.style.cssText = "position:absolute;top:0;left:0;pointer-events:none;z-index:4;";
-  setTimeout(function() {
+  setTimeout(function () {
     var mc = document.getElementById("map");
     if (mc) mc.appendChild(c);
   }, 150);
@@ -637,7 +718,7 @@ var _costmapCtx = _costmapCanvas.getContext("2d");
 
 function _syncCostmapCanvas() {
   var sc = stage.canvas;
-  if (_costmapCanvas.width  !== sc.width)  _costmapCanvas.width  = sc.width;
+  if (_costmapCanvas.width !== sc.width) _costmapCanvas.width = sc.width;
   if (_costmapCanvas.height !== sc.height) _costmapCanvas.height = sc.height;
 }
 
@@ -673,12 +754,12 @@ function drawCostmap(grid) {
   _costmapCtx.clearRect(0, 0, _costmapCanvas.width, _costmapCanvas.height);
   if (Math.abs(viewer.scene.scaleX) < 2) return;   /* map not loaded yet */
 
-  var info  = grid.info;
-  var res   = info.resolution;
-  var ox    = info.origin.position.x;
-  var oy    = info.origin.position.y;
-  var w     = info.width;
-  var data  = grid.data;
+  var info = grid.info;
+  var res = info.resolution;
+  var ox = info.origin.position.x;
+  var oy = info.origin.position.y;
+  var w = info.width;
+  var data = grid.data;
   var scene = viewer.scene;
   /* pixel size of one costmap cell */
   var cellPx = Math.max(1, Math.ceil(Math.abs(res * scene.scaleX)));  /* ceil = sharp, no gaps */
@@ -690,11 +771,11 @@ function drawCostmap(grid) {
 
     var col = i % w;
     var row = Math.floor(i / w);
-    var wx  = ox + (col + 0.5) * res;
-    var wy  = oy + (row + 0.5) * res;
-    var px  = scene.x + wx * scene.scaleX;
-    var py  = scene.y + wy * scene.scaleY;
-    if (px < -cellPx || px > _costmapCanvas.width  + cellPx) continue;
+    var wx = ox + (col + 0.5) * res;
+    var wy = oy + (row + 0.5) * res;
+    var px = scene.x + wx * scene.scaleX;
+    var py = scene.y + wy * scene.scaleY;
+    if (px < -cellPx || px > _costmapCanvas.width + cellPx) continue;
     if (py < -cellPx || py > _costmapCanvas.height + cellPx) continue;
 
     /* RViz-style costmap colours (soft, matching reference image):
@@ -715,200 +796,19 @@ function drawCostmap(grid) {
       _costmapCtx.fillStyle = "rgba(80,80,80,0.85)";      /* inscribed: dark gray */
     } else if (cost >= 128) {
       /* near-lethal: medium gray, darker with higher cost */
-      var t1  = (cost - 128) / 124;
+      var t1 = (cost - 128) / 124;
       var gv1 = Math.round(140 - t1 * 60);                /* 140 → 80 */
-      var a1  = 0.50 + t1 * 0.30;
+      var a1 = 0.50 + t1 * 0.30;
       _costmapCtx.fillStyle = "rgba(" + gv1 + "," + gv1 + "," + gv1 + "," + a1.toFixed(2) + ")";
     } else if (cost >= 20) {
       /* inflation: light gray, fading out at lower cost */
-      var t2  = (cost - 20) / 107;
+      var t2 = (cost - 20) / 107;
       var gv2 = Math.round(180 + t2 * 0);                 /* constant light gray 180 */
-      var a2  = 0.10 + t2 * 0.30;                         /* 0.10 → 0.40 opacity */
+      var a2 = 0.10 + t2 * 0.30;                         /* 0.10 → 0.40 opacity */
       _costmapCtx.fillStyle = "rgba(" + gv2 + "," + gv2 + "," + gv2 + "," + a2.toFixed(2) + ")";
     } else {
       _costmapCtx.fillStyle = "rgba(200,200,200,0.06)";
     }
-    _costmapCtx.fillRect(px - cellPx/2, py - cellPx/2, cellPx, cellPx);
+    _costmapCtx.fillRect(px - cellPx / 2, py - cellPx / 2, cellPx, cellPx);
   }
 }
-
-/* ---------- NAVIGATION FEEDBACK ---------- */
-
-var navigationFeedbackTopic = new ROSLIB.Topic({
-    ros: ros,
-    name: "/navigation_feedback",
-    messageType: "std_msgs/String",
-    compression: "none"
-});
-
-navigationFeedbackTopic.subscribe(function(msg) {
-    showNavigationPopup(msg.data);
-});
-
-/* ---------- LOCALIZATION STATUS ---------- */
-
-var localizationStatusTopic = new ROSLIB.Topic({
-    ros: ros,
-    name: "/localization_status",
-    messageType: "std_msgs/String",
-    compression: "none"
-});
-
-let localizationWasBad = false;
-
-// Captures whether the C4i4 delivery mission was ACTUALLY RUNNING
-// (i.e. the user had pressed Start and it was in progress) at the
-// moment localization degraded. This is the gate for auto-restart:
-// if the user never started a mission, we must never start one for
-// them just because localization flapped bad -> good (e.g. during a
-// manual 2D Pose Estimate correction).
-let _missionWasRunningBeforeBadLoc = false;
-
-localizationStatusTopic.subscribe(function(msg) {
-
-    var status = msg.data.toLowerCase();
-
-    if (status === "bad" || status === "fair") {
-
-        // Only remember "was running" the first time we see bad/fair
-        // after a good period, so a stale flag doesn't linger.
-        if (!localizationWasBad) {
-            _missionWasRunningBeforeBadLoc =
-                (typeof _deliveryRunning !== "undefined" && _deliveryRunning === true);
-        }
-
-        localizationWasBad = true;
-
-        // Reset delivery state
-        deliveryState = "IDLE";
-
-        // Turn OFF Delivery Mode
-        var toggle = document.getElementById("deliveryModeToggle");
-        if (toggle && toggle.checked) {
-            toggle.checked = false;
-
-            if (typeof onDeliveryModeToggle === "function") {
-                onDeliveryModeToggle(false);
-            }
-        }
-
-        // Disable buttons
-        var startBtn = document.getElementById("deliveryStartBtn");
-        if (startBtn) startBtn.disabled = true;
-
-        var stopBtn = document.getElementById("deliveryStopBtn");
-        if (stopBtn) stopBtn.disabled = true;
-
-        // Reset state text
-        var state = document.getElementById("deliveryState");
-        if (state) {
-            state.innerText = "Ready";
-        }
-    }
-
-    // Localization recovered from bad/fair -> good.
-    //
-    // Auto-restart ONLY if the user had actually started the mission
-    // before it went bad (_missionWasRunningBeforeBadLoc). If the user
-    // was just doing plain navigation / correcting the 2D pose and no
-    // mission was running, we do nothing here — the toggle and Start
-    // button stay exactly as the user left them.
-    else if (status === "good" && localizationWasBad) {
-
-        localizationWasBad = false;
-
-        if (!_missionWasRunningBeforeBadLoc) {
-            // No mission was running before — never auto-start.
-            return;
-        }
-
-        _missionWasRunningBeforeBadLoc = false; // consume the flag once
-
-        showToast("✅ Localization recovered — resuming mission", "success");
-
-        var toggle = document.getElementById("deliveryModeToggle");
-        if (toggle && !toggle.checked) {
-            toggle.checked = true;
-            if (typeof onDeliveryModeToggle === "function") {
-                onDeliveryModeToggle(true);
-            }
-        }
-
-        // Give the toggle/UI a moment to settle, then resume via the
-        // normal Start path (startDelivery() itself re-checks
-        // localization and handles the "already_running" backend case).
-        setTimeout(function () {
-            if (typeof startDelivery === "function") {
-                startDelivery();
-            } else {
-                var startBtn = document.getElementById("deliveryStartBtn");
-                if (startBtn && !startBtn.disabled) startBtn.click();
-            }
-        }, 500);
-    }
-
-});
-
-// function showNavigationPopup(text) {
-//     document.getElementById("feedback-text").innerText = text;
-//     document.getElementById("feedback-popup").style.display = "block";
-// }
-
-// function closeFeedbackPopup() {
-//     document.getElementById("feedback-popup").style.display = "none";
-// }
-
-// function showNavigationPopup(text) {
-//     localStorage.setItem("navigation_feedback", text);
-
-//     document.getElementById("feedback-text").innerText = text;
-//     document.getElementById("feedback-popup").style.display = "block";
-// }
-
-function showNavigationPopup(text) {
-
-    localStorage.setItem("navigation_feedback", text);
-
-    const ids = [
-        "feedback-popup",
-        "feedback-popup-delivery"
-    ];
-
-    ids.forEach(function(id){
-        const popup = document.getElementById(id);
-        if(!popup) return;
-
-        popup.querySelector("div").innerText = text;
-        popup.style.display = "block";
-    });
-}
-
-// function closeFeedbackPopup() {
-//     document.getElementById("feedback-popup").style.display = "none";
-//     localStorage.removeItem("navigation_feedback");
-// }
-
-function closeFeedbackPopup() {
-    localStorage.removeItem("navigation_feedback");
-
-    const ids = [
-        "feedback-popup",
-        "feedback-popup-delivery"
-    ];
-
-    ids.forEach(function(id) {
-        const popup = document.getElementById(id);
-        if (popup) {
-            popup.style.display = "none";
-        }
-    });
-}
-
-window.addEventListener("load", function () {
-    const savedFeedback = localStorage.getItem("navigation_feedback");
-
-    if (savedFeedback) {
-        document.getElementById("feedback-text").innerText = savedFeedback;
-        document.getElementById("feedback-popup").style.display = "block";
-    }
-});
