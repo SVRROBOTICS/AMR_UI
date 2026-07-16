@@ -1,0 +1,6 @@
+image: c4i4.pgm
+resolution: 0.02500000037252903
+origin: [-5.091014966351004, -7.548734429050192, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25

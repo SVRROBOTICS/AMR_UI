@@ -1,0 +1,6 @@
+image: 123456.pgm
+resolution: 0.02500000037252903
+origin: [-17.31032502718247, -15.660021319330808, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
